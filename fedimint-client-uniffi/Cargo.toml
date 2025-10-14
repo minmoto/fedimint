@@ -31,4 +31,5 @@ uniffi = { version = "0.29", features = ["cli"] }
 
 [build-dependencies]
 uniffi = { version = "0.29", features = ["build"] }
+fedimint-build = { workspace = true }
 
