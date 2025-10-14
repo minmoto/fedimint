@@ -1,4 +1,3 @@
 fn main() {
-    println!("cargo:rerun-if-changed=src/lib.rs");
+    fedimint_build::set_code_version();
 }
-

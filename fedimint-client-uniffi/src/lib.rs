@@ -19,7 +19,6 @@ pub enum FedimintError {
 
 #[uniffi::export(callback_interface)]
 pub trait RpcCallback: Send + Sync {
-    /// Called when an RPC response is ready
     fn on_response(&self, response: String);
 }
 
@@ -46,16 +45,7 @@ impl RpcHandler {
         Ok(Arc::new(Self { state, runtime }))
     }
     
-    /// Make an RPC call
-    /// 
-    /// # Arguments
-    /// * `request_json` - JSON string containing the RPC request (see RpcRequest type)
-    /// * `callback` - Callback that will receive response JSON strings
-    /// 
-    /// The callback will be called multiple times:
-    /// - Once or more with `{ "type": "data", "data": ... }` responses
-    /// - Finally with `{ "type": "end" }` or `{ "type": "error", "error": "..." }`
-    pub fn rpc(&self, request_json: String, callback: Box<dyn RpcCallback>) {
+        pub fn rpc(&self, request_json: String, callback: Box<dyn RpcCallback>) {
         // Parse the JSON request
         let request: RpcRequest = serde_json::from_str(&request_json)
             .expect("Invalid request JSON");
@@ -66,7 +56,7 @@ impl RpcHandler {
             CallbackWrapper(callback)
         );
         
-        // If there's an async task to run, spawn it on the runtime
+        // Spawn the task on the runtime instead of blocking a thread
         if let Some(task) = handled.task {
             self.runtime.spawn(task);
         }
@@ -90,15 +80,15 @@ impl RpcResponseHandler for CallbackWrapper {
 /// 
 /// Uses redb (pure Rust) instead of RocksDB to avoid C++ dependencies
 /// This is more suitable for mobile cross-compilation
-fn create_database(path: &str) -> anyhow::Result<Database> {
+fn create_database(path: &str, runtime: &tokio::runtime::Runtime) -> anyhow::Result<Database> {
     use fedimint_cursed_redb::MemAndRedb;
     
     std::fs::create_dir_all(path)?;
     
     let db_path = std::path::Path::new(path).join("fedimint.redb");
     
-    let locked_db = tokio::runtime::Runtime::new()?
-        .block_on(async { MemAndRedb::new(db_path).await })?;
+    // Use the provided runtime instead of creating a temporary one
+    let locked_db = runtime.block_on(async { MemAndRedb::new(db_path).await })?;
     
     Ok(Database::new(locked_db, Default::default()))
 }
