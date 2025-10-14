@@ -5,6 +5,8 @@ use fedimint_core::db::Database;
 
 uniffi::setup_scaffolding!();
 
+const DB_FILE_NAME: &str = "fedimint.redb";
+
 #[uniffi::export(callback_interface)]
 pub trait RpcCallback: Send + Sync {
     fn on_response(&self, response: String);
@@ -58,16 +60,13 @@ impl RpcResponseHandler for CallbackWrapper {
     }
 }
 
-/// Create a database for mobile using fedimint-cursed-redb
-/// 
-/// Uses redb (pure Rust) instead of RocksDB to avoid C++ dependencies
-/// This is more suitable for mobile cross-compilation
+/// Creates a redb-based database (pure Rust, no C++ dependencies)
 fn create_database(path: &str) -> anyhow::Result<Database> {
     use fedimint_cursed_redb::MemAndRedb;
     
     std::fs::create_dir_all(path)?;
     
-    let db_path = std::path::Path::new(path).join("fedimint.redb");
+    let db_path = std::path::Path::new(path).join(DB_FILE_NAME);
     
     let locked_db = tokio::runtime::Runtime::new()?
         .block_on(async { MemAndRedb::new(db_path).await })?;
