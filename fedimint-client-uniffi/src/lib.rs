@@ -7,6 +7,21 @@ uniffi::setup_scaffolding!();
 
 const DB_FILE_NAME: &str = "fedimint.redb";
 
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum FedimintError {
+    #[error("Database initialization failed: {msg}")]
+    DatabaseError { msg: String },
+    
+    #[error("Failed to create async runtime: {msg}")]
+    RuntimeError { msg: String },
+    
+    #[error("Invalid request JSON: {msg}")]
+    InvalidRequest { msg: String },
+    
+    #[error("General error: {msg}")]
+    General { msg: String },
+}
+
 #[uniffi::export(callback_interface)]
 pub trait RpcCallback: Send + Sync {
     fn on_response(&self, response: String);
@@ -21,20 +36,20 @@ pub struct RpcHandler {
 #[uniffi::export]
 impl RpcHandler {
     #[uniffi::constructor]
-    pub fn new(db_path: String) -> Result<Arc<Self>, String> {
+    pub fn new(db_path: String) -> Result<Arc<Self>, FedimintError> {
         let db = create_database(&db_path)
-            .map_err(|e| format!("Database initialization failed: {}", e))?;
+            .map_err(|e| FedimintError::DatabaseError { msg: e.to_string() })?;
         let state = Arc::new(RpcGlobalState::new(db));
         
         let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| format!("Failed to create async runtime: {}", e))?;
+            .map_err(|e| FedimintError::RuntimeError { msg: e.to_string() })?;
         
         Ok(Arc::new(Self { state, runtime }))
     }
 
-    pub fn rpc(&self, request_json: String, callback: Box<dyn RpcCallback>) -> Result<(), String> {
+    pub fn rpc(&self, request_json: String, callback: Box<dyn RpcCallback>) -> Result<(), FedimintError> {
         let request: RpcRequest = serde_json::from_str(&request_json)
-            .map_err(|e| format!("Invalid request JSON: {}", e))?;
+            .map_err(|e| FedimintError::InvalidRequest { msg: e.to_string() })?;
         
         let handled = self.state.clone().handle_rpc(
             request,
