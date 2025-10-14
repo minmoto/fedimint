@@ -5,18 +5,6 @@ use fedimint_core::db::Database;
 
 uniffi::setup_scaffolding!();
 
-#[derive(Debug, thiserror::Error, uniffi::Error)]
-pub enum FedimintError {
-    #[error("Database error: {msg}")]
-    DatabaseError { msg: String },
-    
-    #[error("Runtime error: {msg}")]
-    RuntimeError { msg: String },
-    
-    #[error("{msg}")]
-    Other { msg: String },
-}
-
 #[uniffi::export(callback_interface)]
 pub trait RpcCallback: Send + Sync {
     fn on_response(&self, response: String);
@@ -31,40 +19,34 @@ pub struct RpcHandler {
 #[uniffi::export]
 impl RpcHandler {
     #[uniffi::constructor]
-    pub fn new(db_path: String) -> Result<Arc<Self>, FedimintError> {
+    pub fn new(db_path: String) -> Result<Arc<Self>, String> {
         let db = create_database(&db_path)
-            .map_err(|e| FedimintError::DatabaseError { msg: e.to_string() })?;
-        
-        // Create the RPC global state (this is where all the fedimint client logic lives)
+            .map_err(|e| format!("Database initialization failed: {}", e))?;
         let state = Arc::new(RpcGlobalState::new(db));
         
-        // Create tokio runtime for async operations
         let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| FedimintError::RuntimeError { msg: e.to_string() })?;
+            .map_err(|e| format!("Failed to create async runtime: {}", e))?;
         
         Ok(Arc::new(Self { state, runtime }))
     }
-    
-        pub fn rpc(&self, request_json: String, callback: Box<dyn RpcCallback>) {
-        // Parse the JSON request
+
+    pub fn rpc(&self, request_json: String, callback: Box<dyn RpcCallback>) -> Result<(), String> {
         let request: RpcRequest = serde_json::from_str(&request_json)
-            .expect("Invalid request JSON");
+            .map_err(|e| format!("Invalid request JSON: {}", e))?;
         
-        // Handle the RPC call through the global state
         let handled = self.state.clone().handle_rpc(
             request,
             CallbackWrapper(callback)
         );
         
-        // Spawn the task on the runtime instead of blocking a thread
         if let Some(task) = handled.task {
             self.runtime.spawn(task);
         }
+        
+        Ok(())
     }
 }
 
-/// Adapter: Converts UniFFI callback to RpcResponseHandler
-/// This bridges the UniFFI world with the fedimint-client-rpc world
 struct CallbackWrapper(Box<dyn RpcCallback>);
 
 impl RpcResponseHandler for CallbackWrapper {
@@ -72,7 +54,7 @@ impl RpcResponseHandler for CallbackWrapper {
         // Serialize the response to JSON and call the UniFFI callback
         let json = serde_json::to_string(&response)
             .expect("Failed to serialize RPC response");
-        self.0.on_response(json);
+                self.0.on_response(json);
     }
 }
 
@@ -80,15 +62,15 @@ impl RpcResponseHandler for CallbackWrapper {
 /// 
 /// Uses redb (pure Rust) instead of RocksDB to avoid C++ dependencies
 /// This is more suitable for mobile cross-compilation
-fn create_database(path: &str, runtime: &tokio::runtime::Runtime) -> anyhow::Result<Database> {
+fn create_database(path: &str) -> anyhow::Result<Database> {
     use fedimint_cursed_redb::MemAndRedb;
     
     std::fs::create_dir_all(path)?;
     
     let db_path = std::path::Path::new(path).join("fedimint.redb");
     
-    // Use the provided runtime instead of creating a temporary one
-    let locked_db = runtime.block_on(async { MemAndRedb::new(db_path).await })?;
+    let locked_db = tokio::runtime::Runtime::new()?
+        .block_on(async { MemAndRedb::new(db_path).await })?;
     
     Ok(Database::new(locked_db, Default::default()))
 }
@@ -103,7 +85,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         
         let handler = RpcHandler::new(temp_dir.to_str().unwrap().to_string());
-        assert!(handler.is_ok(), "RpcHandler creation should succeed");
+        match handler {
+            Ok(_) => {} // Success
+            Err(e) => panic!("RpcHandler creation failed: {}", e),
+        }
         
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
